@@ -6,9 +6,52 @@
     <title>Video Scripting Bot</title>
 </head>
 <body>
-    <h1>Welcome to the Video Scripting Bot</h1>
-    <p>This is a placeholder page for your bot’s frontend interface.</p>
+    <h1>Generate Your Video Script</h1>
+    <form id="scriptForm">
+        <label for="topic">Topic:</label><br>
+        <input type="text" id="topic" name="topic" required><br><br>
+
+        <label for="tone">Tone:</label><br>
+        <select id="tone" name="tone">
+            <option value="neutral">Neutral</option>
+            <option value="formal">Formal</option>
+            <option value="casual">Casual</option>
+        </select><br><br>
+
+        <label for="wordCount">Word Count:</label><br>
+        <input type="number" id="wordCount" name="wordCount" min="50" max="1000" value="300"><br><br>
+
+        <button type="button" onclick="generateScript()">Generate Script</button>
+    </form>
+    <div id="output">
+        <h2>Generated Script:</h2>
+        <pre id="scriptResult"></pre>
+    </div>
+    <script>
+        async function generateScript() {
+            const formData = {
+                topic: document.getElementById('topic').value,
+                tone: document.getElementById('tone').value,
+                word_count: parseInt(document.getElementById('wordCount').value)
+            };
+
+            // Call the backend API to generate the script
+            const response = await fetch('/generate-script/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(formData)
+            });
+
+            const data = await response.json();
+            if (data.script) {
+                document.getElementById('scriptResult').textContent = data.script;
+            } else {
+                document.getElementById('scriptResult').textContent = 'Error generating script.';
+            }
+        }
+    </script>
 </body>
 </html>
-
 
