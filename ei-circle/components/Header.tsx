@@ -13,7 +13,7 @@ export default function Header({ agentName }: HeaderProps) {
       <div className="mx-auto flex items-center justify-between px-4" style={{ maxWidth: 480, height: 60 }}>
         <div className="flex items-center gap-3">
           <img
-            src="/logo.png"
+            src="/logo.svg"
             alt="Exposure IT"
             className="rounded-full"
             style={{ width: 38, height: 38 }}

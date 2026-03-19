@@ -54,7 +54,7 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="flex justify-center mb-4">
           <img
-            src="/logo.png"
+            src="/logo.svg"
             alt="Exposure IT"
             width={60}
             height={60}
