@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const expiration = require('./services/expiration');
+const { ensureSheetSetup } = require('./services/sheets');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,8 +29,16 @@ app.get('/', (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Exposure It Waitlist server running on port ${PORT}`);
+
+  // Auto-provision Google Sheet tabs and headers on startup
+  try {
+    await ensureSheetSetup();
+  } catch (err) {
+    console.error('Google Sheet setup failed (will retry on first request):', err.message);
+  }
+
   expiration.startExpirationChecker();
   console.log('Expiration checker started (checking every 60s)');
 });

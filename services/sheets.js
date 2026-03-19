@@ -1,6 +1,7 @@
 const { google } = require('googleapis');
 
 let sheetsClient = null;
+let sheetReady = false;
 
 function getAuth() {
   const key = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
@@ -25,6 +26,106 @@ function getSheetId() {
   const id = process.env.GOOGLE_SHEET_ID;
   if (!id) throw new Error('GOOGLE_SHEET_ID not configured');
   return id;
+}
+
+const WAITLIST_HEADERS = [
+  'ID', 'Agent Name', 'Agent Phone', 'Agent Email', 'Service Type', 'Area',
+  'Date Preference', 'Date Range Start', 'Date Range End', 'Notes',
+  'Added By', 'Date Added', 'Status', 'Notifications Sent', 'Last Notified',
+];
+
+const CLAIM_LOG_HEADERS = [
+  'Claim ID', 'Waitlist ID', 'Agent Name', 'Cancelled Shoot Date',
+  'Cancelled Shoot Time', 'Service Type', 'Area', 'Claimed At', 'Booked in Spiro',
+];
+
+// Auto-provision tabs and headers on first startup
+async function ensureSheetSetup() {
+  if (sheetReady) return;
+
+  const sheets = await getSheets();
+  const spreadsheetId = getSheetId();
+  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+  const existingTabs = spreadsheet.data.sheets.map((s) => s.properties.title);
+
+  const addRequests = [];
+  if (!existingTabs.includes('Active Waitlist')) {
+    addRequests.push({ addSheet: { properties: { title: 'Active Waitlist' } } });
+  }
+  if (!existingTabs.includes('Claim Log')) {
+    addRequests.push({ addSheet: { properties: { title: 'Claim Log' } } });
+  }
+
+  if (addRequests.length > 0) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: addRequests },
+    });
+    console.log('Created missing sheet tabs:', addRequests.map((r) => r.addSheet.properties.title).join(', '));
+  }
+
+  // Write headers if row 1 is empty
+  const waitlistHeader = await sheets.spreadsheets.values.get({
+    spreadsheetId, range: 'Active Waitlist!A1:O1',
+  });
+  if (!waitlistHeader.data.values || waitlistHeader.data.values.length === 0) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId, range: 'Active Waitlist!A1:O1',
+      valueInputOption: 'RAW',
+      requestBody: { values: [WAITLIST_HEADERS] },
+    });
+    console.log('Wrote Active Waitlist headers.');
+  }
+
+  const claimHeader = await sheets.spreadsheets.values.get({
+    spreadsheetId, range: 'Claim Log!A1:I1',
+  });
+  if (!claimHeader.data.values || claimHeader.data.values.length === 0) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId, range: 'Claim Log!A1:I1',
+      valueInputOption: 'RAW',
+      requestBody: { values: [CLAIM_LOG_HEADERS] },
+    });
+    console.log('Wrote Claim Log headers.');
+  }
+
+  // Bold + freeze header rows
+  const updated = await sheets.spreadsheets.get({ spreadsheetId });
+  const formatRequests = [];
+  for (const sheet of updated.data.sheets) {
+    if (['Active Waitlist', 'Claim Log'].includes(sheet.properties.title)) {
+      formatRequests.push({
+        repeatCell: {
+          range: { sheetId: sheet.properties.sheetId, startRowIndex: 0, endRowIndex: 1 },
+          cell: {
+            userEnteredFormat: {
+              textFormat: { bold: true },
+              backgroundColor: { red: 0.9, green: 0.9, blue: 0.9 },
+            },
+          },
+          fields: 'userEnteredFormat(textFormat,backgroundColor)',
+        },
+      });
+      formatRequests.push({
+        updateSheetProperties: {
+          properties: {
+            sheetId: sheet.properties.sheetId,
+            gridProperties: { frozenRowCount: 1 },
+          },
+          fields: 'gridProperties.frozenRowCount',
+        },
+      });
+    }
+  }
+  if (formatRequests.length > 0) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: formatRequests },
+    });
+  }
+
+  sheetReady = true;
+  console.log('Google Sheet verified and ready.');
 }
 
 // Generate next waitlist ID based on existing rows
@@ -211,6 +312,7 @@ async function checkDuplicatePhone(phone) {
 }
 
 module.exports = {
+  ensureSheetSetup,
   addWaitlistEntry,
   getActiveWaitlistEntries,
   updateEntryStatus,
