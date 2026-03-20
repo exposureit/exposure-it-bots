@@ -12,13 +12,13 @@ const router = express.Router();
 function renderTemplate(filePath, replacements) {
   let html = fs.readFileSync(filePath, 'utf8');
   for (const [key, value] of Object.entries(replacements)) {
-    html = html.replace(new RegExp(`{{${key}}}`, 'g'), value);
+    html = html.replace(new RegExp(`{{${key}}}`, 'g'), value || '');
   }
   return html;
 }
 
 // Claim page — shows shoot details and claim button
-router.get('/:token', (req, res) => {
+router.get('/:token', async (req, res) => {
   const tokenData = verifyClaimToken(req.params.token);
   if (!tokenData) {
     return res.status(400).send('Invalid claim link.');
@@ -26,22 +26,12 @@ router.get('/:token', (req, res) => {
 
   const { cancellationId } = tokenData;
 
-  // Check if already claimed
-  if (expiration.isClaimed(cancellationId)) {
-    const html = renderTemplate(
-      path.join(__dirname, '..', 'views', 'claim-taken.html'),
-      {}
-    );
-    return res.send(html);
+  if (expiration.isClaimed(cancellationId) || expiration.isFilledExternally(cancellationId)) {
+    return res.send(renderTemplate(path.join(__dirname, '..', 'views', 'claim-taken.html'), {}));
   }
 
-  // Check if expired
   if (expiration.isExpired(cancellationId)) {
-    const html = renderTemplate(
-      path.join(__dirname, '..', 'views', 'claim-expired.html'),
-      {}
-    );
-    return res.send(html);
+    return res.send(renderTemplate(path.join(__dirname, '..', 'views', 'claim-expired.html'), {}));
   }
 
   const event = expiration.getCancellationEvent(cancellationId);
@@ -49,17 +39,17 @@ router.get('/:token', (req, res) => {
     return res.status(404).send('Slot not found.');
   }
 
-  const html = renderTemplate(
-    path.join(__dirname, '..', 'views', 'claim-page.html'),
-    {
-      serviceType: event.details.serviceType,
-      area: event.details.area,
-      date: event.details.date,
-      time: event.details.time,
-      token: req.params.token,
-    }
-  );
-  res.send(html);
+  const timeRemaining = expiration.getTimeRemaining(cancellationId);
+  const minutesLeft = Math.ceil(timeRemaining / 60000);
+
+  res.send(renderTemplate(path.join(__dirname, '..', 'views', 'claim-page.html'), {
+    serviceType: event.details.bundleName || event.details.cancelledBy || '',
+    date: event.details.shootDate,
+    time: event.details.shootTime,
+    duration: String(event.details.duration || ''),
+    token: req.params.token,
+    minutesLeft: String(minutesLeft),
+  }));
 });
 
 // Claim action — process the claim
@@ -71,22 +61,12 @@ router.post('/:token', async (req, res) => {
 
   const { waitlistId, cancellationId } = tokenData;
 
-  // Check if already claimed
-  if (expiration.isClaimed(cancellationId)) {
-    const html = renderTemplate(
-      path.join(__dirname, '..', 'views', 'claim-taken.html'),
-      {}
-    );
-    return res.send(html);
+  if (expiration.isClaimed(cancellationId) || expiration.isFilledExternally(cancellationId)) {
+    return res.send(renderTemplate(path.join(__dirname, '..', 'views', 'claim-taken.html'), {}));
   }
 
-  // Check if expired
   if (expiration.isExpired(cancellationId)) {
-    const html = renderTemplate(
-      path.join(__dirname, '..', 'views', 'claim-expired.html'),
-      {}
-    );
-    return res.send(html);
+    return res.send(renderTemplate(path.join(__dirname, '..', 'views', 'claim-expired.html'), {}));
   }
 
   const event = expiration.getCancellationEvent(cancellationId);
@@ -95,37 +75,40 @@ router.post('/:token', async (req, res) => {
   }
 
   try {
-    // Mark as claimed (do this first to prevent race conditions)
+    // Mark as claimed immediately (race condition protection)
     expiration.markClaimed(cancellationId, waitlistId);
 
-    // Find the claiming agent's details
-    const entries = await sheets.getActiveWaitlistEntries();
-    const claimingAgent = entries.find((e) => e.id === waitlistId);
-
+    // Get the claiming agent's details
+    const claimingAgent = await sheets.getEntryById(waitlistId);
     if (!claimingAgent) {
       return res.status(404).send('Agent not found.');
     }
 
-    // Update Google Sheets
+    // Update waitlist status
     await sheets.updateEntryStatus(waitlistId, 'Claimed');
+
+    // Update cancellation log
+    if (event.eventId) {
+      await sheets.updateCancellationStatus(event.eventId, 'Claimed', claimingAgent.agentName);
+    }
 
     // Add to claim log
     await sheets.addClaimLogEntry({
       waitlistId,
+      eventId: event.eventId || '',
       agentName: claimingAgent.agentName,
-      cancelledDate: event.details.date,
-      cancelledTime: event.details.time,
-      serviceType: event.details.serviceType,
-      area: event.details.area,
+      agentPhone: claimingAgent.agentPhone,
+      service: claimingAgent.serviceType,
+      duration: claimingAgent.adjustedDuration || claimingAgent.baseDuration,
+      listingAddress: claimingAgent.listingAddress,
+      sqFt: claimingAgent.squareFootage,
     });
 
-    // Send confirmation to the claiming agent
-    await notifier.notifyAgentOfClaim(claimingAgent, event.details);
+    // Send confirmation to claiming agent
+    await notifier.notifyClaimConfirmation(claimingAgent, claimingAgent, event.details);
 
     // Post to Slack
-    await slack.postToSlack(
-      slack.formatSlotClaimed(claimingAgent.agentName, event.details)
-    );
+    await slack.postToSlack(slack.formatSlotClaimed(claimingAgent, event.details));
 
     // Notify other agents that the slot was taken
     const otherAgents = event.notifiedAgents.filter((a) => a.id !== waitlistId);
@@ -134,19 +117,16 @@ router.post('/:token', async (req, res) => {
     }
 
     // Show success page
-    const html = renderTemplate(
-      path.join(__dirname, '..', 'views', 'claim-success.html'),
-      {
-        serviceType: event.details.serviceType,
-        area: event.details.area,
-        date: event.details.date,
-        time: event.details.time,
-      }
-    );
-    res.send(html);
+    res.send(renderTemplate(path.join(__dirname, '..', 'views', 'claim-success.html'), {
+      serviceType: claimingAgent.serviceType,
+      date: event.details.shootDate,
+      time: event.details.shootTime,
+      duration: String(claimingAgent.adjustedDuration || claimingAgent.baseDuration || ''),
+      listingAddress: claimingAgent.listingAddress,
+    }));
   } catch (err) {
     console.error('[Claim] Error:', err);
-    res.status(500).send('Something went wrong. Please contact Exposure It directly.');
+    res.status(500).send('Something went wrong. Please contact Exposure It at 412-709-5227.');
   }
 });
 

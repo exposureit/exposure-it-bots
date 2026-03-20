@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Removed — Exposure It</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .card { background: #fff; padding: 32px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-width: 420px; width: 90%; text-align: center; }
+    h1 { font-size: 20px; margin-bottom: 12px; }
+    .message { color: #475569; line-height: 1.6; margin-bottom: 20px; font-size: 15px; }
+    .detail { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 24px; font-size: 14px; color: #475569; }
+    .rejoin-btn { display: inline-block; padding: 12px 24px; background: #252525; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px; }
+    .rejoin-btn:hover { background: #000; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>You've Been Removed</h1>
+    <p class="message">You won't receive notifications for this listing anymore.</p>
+    <div class="detail">{{serviceType}} | {{listingAddress}}</div>
+    <a href="/waitlist" class="rejoin-btn">Re-join the Waitlist</a>
+  </div>
+</body>
+</html>

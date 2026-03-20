@@ -23,66 +23,62 @@ async function getSheets() {
 }
 
 function getSheetId() {
-  const id = process.env.GOOGLE_SHEET_ID;
-  if (!id) throw new Error('GOOGLE_SHEET_ID not configured');
+  const id = process.env.GOOGLE_SHEETS_ID || process.env.GOOGLE_SHEET_ID;
+  if (!id) throw new Error('GOOGLE_SHEETS_ID not configured');
   return id;
 }
 
+// --- Tab 1: Active Waitlist (A:S) ---
 const WAITLIST_HEADERS = [
-  'ID', 'Agent Name', 'Agent Phone', 'Agent Email', 'Service Type', 'Area',
-  'Date Preference', 'Date Range Start', 'Date Range End', 'Notes',
-  'Added By', 'Date Added', 'Status', 'Notifications Sent', 'Last Notified',
+  'ID', 'Agent Name', 'Agent Phone', 'Agent Email', 'Listing Address',
+  'Square Footage', 'Service Type', 'Base Duration', 'Adjusted Duration',
+  'Timing', 'Date Range Start', 'Date Range End', 'Notes', 'Added By',
+  'Source', 'Date Added', 'Status', 'Notifications Sent', 'Last Notified',
 ];
 
+// --- Tab 2: Cancellation Log (A:L) ---
+const CANCELLATION_LOG_HEADERS = [
+  'Event ID', 'Shoot Date', 'Shoot Time', 'Duration (min)', 'Cancelled By',
+  'Received At', 'Status', 'Filled By', 'Agents Notified', 'Agents Skipped',
+  'Claimed By', 'Claimed At',
+];
+
+// --- Tab 3: Claim Log (A:K) ---
 const CLAIM_LOG_HEADERS = [
-  'Claim ID', 'Waitlist ID', 'Agent Name', 'Cancelled Shoot Date',
-  'Cancelled Shoot Time', 'Service Type', 'Area', 'Claimed At', 'Booked in Spiro',
+  'Claim ID', 'Waitlist ID', 'Event ID', 'Agent Name', 'Agent Phone',
+  'Service', 'Duration', 'Listing Address', 'Sq Ft', 'Claimed At',
+  'Booked in Spiro',
 ];
 
-// Column widths for Active Waitlist (A-O)
+// Column widths for Active Waitlist (A-S)
 const WAITLIST_COL_WIDTHS = [
-  80,   // A: ID
-  160,  // B: Agent Name
-  130,  // C: Agent Phone
-  220,  // D: Agent Email
-  120,  // E: Service Type
-  110,  // F: Area
-  160,  // G: Date Preference
-  130,  // H: Date Range Start
-  130,  // I: Date Range End
-  220,  // J: Notes
-  110,  // K: Added By
-  180,  // L: Date Added
-  100,  // M: Status
-  140,  // N: Notifications Sent
-  180,  // O: Last Notified
+  80, 160, 130, 220, 250, 100, 160, 100, 110,
+  140, 120, 120, 200, 100, 100, 180, 100, 120, 180,
 ];
 
-// Column widths for Claim Log (A-I)
+// Column widths for Cancellation Log (A-L)
+const CANCEL_COL_WIDTHS = [
+  90, 120, 110, 100, 160, 180, 130, 160, 110, 110, 160, 180,
+];
+
+// Column widths for Claim Log (A-K)
 const CLAIM_COL_WIDTHS = [
-  90,   // A: Claim ID
-  100,  // B: Waitlist ID
-  160,  // C: Agent Name
-  160,  // D: Cancelled Shoot Date
-  150,  // E: Cancelled Shoot Time
-  120,  // F: Service Type
-  110,  // G: Area
-  180,  // H: Claimed At
-  130,  // I: Booked in Spiro
+  90, 100, 100, 160, 130, 160, 80, 250, 80, 180, 130,
 ];
 
-// Brand colors
 const COLORS = {
-  headerBg: { red: 0.145, green: 0.145, blue: 0.145 },       // dark charcoal
-  headerText: { red: 1, green: 1, blue: 1 },                   // white
-  activeGreen: { red: 0.85, green: 0.95, blue: 0.85 },         // light green
-  claimedBlue: { red: 0.85, green: 0.91, blue: 0.98 },         // light blue
-  expiredRed: { red: 0.98, green: 0.87, blue: 0.87 },          // light red
-  altRow: { red: 0.96, green: 0.96, blue: 0.96 },              // subtle grey stripe
-  white: { red: 1, green: 1, blue: 1 },
+  headerBg: { red: 0.145, green: 0.145, blue: 0.145 },
+  headerText: { red: 1, green: 1, blue: 1 },
+  activeGreen: { red: 0.85, green: 0.95, blue: 0.85 },
+  claimedBlue: { red: 0.85, green: 0.91, blue: 0.98 },
+  expiredRed: { red: 0.98, green: 0.87, blue: 0.87 },
+  removedGray: { red: 0.93, green: 0.93, blue: 0.93 },
+  openYellow: { red: 1, green: 0.97, blue: 0.85 },
+  filledPurple: { red: 0.93, green: 0.88, blue: 0.98 },
 };
 
-// Auto-provision tabs and headers on first startup
+const TAB_NAMES = ['Active Waitlist', 'Cancellation Log', 'Claim Log'];
+
 async function ensureSheetSetup() {
   if (sheetReady) return;
 
@@ -91,12 +87,12 @@ async function ensureSheetSetup() {
   const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
   const existingTabs = spreadsheet.data.sheets.map((s) => s.properties.title);
 
+  // Create missing tabs
   const addRequests = [];
-  if (!existingTabs.includes('Active Waitlist')) {
-    addRequests.push({ addSheet: { properties: { title: 'Active Waitlist' } } });
-  }
-  if (!existingTabs.includes('Claim Log')) {
-    addRequests.push({ addSheet: { properties: { title: 'Claim Log' } } });
+  for (const tab of TAB_NAMES) {
+    if (!existingTabs.includes(tab)) {
+      addRequests.push({ addSheet: { properties: { title: tab } } });
+    }
   }
 
   if (addRequests.length > 0) {
@@ -104,32 +100,28 @@ async function ensureSheetSetup() {
       spreadsheetId,
       requestBody: { requests: addRequests },
     });
-    console.log('Created missing sheet tabs:', addRequests.map((r) => r.addSheet.properties.title).join(', '));
+    console.log('Created tabs:', addRequests.map((r) => r.addSheet.properties.title).join(', '));
   }
 
-  // Write headers if row 1 is empty
-  const waitlistHeader = await sheets.spreadsheets.values.get({
-    spreadsheetId, range: 'Active Waitlist!A1:O1',
-  });
-  if (!waitlistHeader.data.values || waitlistHeader.data.values.length === 0) {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId, range: 'Active Waitlist!A1:O1',
-      valueInputOption: 'RAW',
-      requestBody: { values: [WAITLIST_HEADERS] },
-    });
-    console.log('Wrote Active Waitlist headers.');
-  }
+  // Write headers if empty
+  const headerConfigs = [
+    { tab: 'Active Waitlist', headers: WAITLIST_HEADERS, range: 'A1:S1' },
+    { tab: 'Cancellation Log', headers: CANCELLATION_LOG_HEADERS, range: 'A1:L1' },
+    { tab: 'Claim Log', headers: CLAIM_LOG_HEADERS, range: 'A1:K1' },
+  ];
 
-  const claimHeader = await sheets.spreadsheets.values.get({
-    spreadsheetId, range: 'Claim Log!A1:I1',
-  });
-  if (!claimHeader.data.values || claimHeader.data.values.length === 0) {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId, range: 'Claim Log!A1:I1',
-      valueInputOption: 'RAW',
-      requestBody: { values: [CLAIM_LOG_HEADERS] },
+  for (const cfg of headerConfigs) {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId, range: `${cfg.tab}!${cfg.range}`,
     });
-    console.log('Wrote Claim Log headers.');
+    if (!res.data.values || res.data.values.length === 0) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId, range: `${cfg.tab}!${cfg.range}`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [cfg.headers] },
+      });
+      console.log(`Wrote ${cfg.tab} headers.`);
+    }
   }
 
   // Get sheet IDs for formatting
@@ -141,13 +133,21 @@ async function ensureSheetSetup() {
 
   const formatRequests = [];
 
-  // --- Active Waitlist formatting ---
-  const wlId = sheetMap['Active Waitlist'];
-  if (wlId !== undefined) {
-    // Header style: dark background, white bold text, centered
+  // Apply header formatting + freeze + column widths to all tabs
+  const tabConfigs = [
+    { name: 'Active Waitlist', widths: WAITLIST_COL_WIDTHS },
+    { name: 'Cancellation Log', widths: CANCEL_COL_WIDTHS },
+    { name: 'Claim Log', widths: CLAIM_COL_WIDTHS },
+  ];
+
+  for (const cfg of tabConfigs) {
+    const sid = sheetMap[cfg.name];
+    if (sid === undefined) continue;
+
+    // Header style
     formatRequests.push({
       repeatCell: {
-        range: { sheetId: wlId, startRowIndex: 0, endRowIndex: 1 },
+        range: { sheetId: sid, startRowIndex: 0, endRowIndex: 1 },
         cell: {
           userEnteredFormat: {
             textFormat: { bold: true, fontSize: 10, foregroundColor: COLORS.headerText },
@@ -162,118 +162,92 @@ async function ensureSheetSetup() {
       },
     });
 
-    // Freeze header row
+    // Freeze header
     formatRequests.push({
       updateSheetProperties: {
-        properties: {
-          sheetId: wlId,
-          gridProperties: { frozenRowCount: 1 },
-        },
+        properties: { sheetId: sid, gridProperties: { frozenRowCount: 1 } },
         fields: 'gridProperties.frozenRowCount',
       },
     });
 
     // Column widths
-    WAITLIST_COL_WIDTHS.forEach((width, i) => {
+    cfg.widths.forEach((width, i) => {
       formatRequests.push({
         updateDimensionProperties: {
-          range: { sheetId: wlId, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 },
+          range: { sheetId: sid, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 },
           properties: { pixelSize: width },
           fields: 'pixelSize',
         },
       });
     });
+  }
 
-    // Data validation: Service Type dropdown (column E, rows 2-500)
+  // --- Active Waitlist data validation & conditional formatting ---
+  const wlId = sheetMap['Active Waitlist'];
+  if (wlId !== undefined) {
+    // Timing dropdown (col J = index 9)
     formatRequests.push({
       setDataValidation: {
-        range: { sheetId: wlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 4, endColumnIndex: 5 },
+        range: { sheetId: wlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 9, endColumnIndex: 10 },
         rule: {
           condition: {
             type: 'ONE_OF_LIST',
             values: [
-              { userEnteredValue: 'Photo' },
-              { userEnteredValue: 'Video' },
-              { userEnteredValue: 'Drone' },
-              { userEnteredValue: '3D' },
-              { userEnteredValue: 'Combo' },
-              { userEnteredValue: 'Any' },
+              { userEnteredValue: 'Next Available' },
+              { userEnteredValue: 'Specific Dates' },
             ],
           },
-          showCustomUi: true,
-          strict: false,
+          showCustomUi: true, strict: false,
         },
       },
     });
 
-    // Data validation: Area dropdown (column F, rows 2-500)
+    // Status dropdown (col Q = index 16)
     formatRequests.push({
       setDataValidation: {
-        range: { sheetId: wlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 5, endColumnIndex: 6 },
-        rule: {
-          condition: {
-            type: 'ONE_OF_LIST',
-            values: [
-              { userEnteredValue: 'Pittsburgh' },
-              { userEnteredValue: 'Erie' },
-              { userEnteredValue: 'Either' },
-            ],
-          },
-          showCustomUi: true,
-          strict: false,
-        },
-      },
-    });
-
-    // Data validation: Date Preference dropdown (column G, rows 2-500)
-    formatRequests.push({
-      setDataValidation: {
-        range: { sheetId: wlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 6, endColumnIndex: 7 },
-        rule: {
-          condition: {
-            type: 'ONE_OF_LIST',
-            values: [
-              { userEnteredValue: 'ASAP/Next Available' },
-              { userEnteredValue: 'Specific Date Range' },
-              { userEnteredValue: 'Flexible' },
-            ],
-          },
-          showCustomUi: true,
-          strict: false,
-        },
-      },
-    });
-
-    // Data validation: Status dropdown (column M, rows 2-500)
-    formatRequests.push({
-      setDataValidation: {
-        range: { sheetId: wlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 12, endColumnIndex: 13 },
+        range: { sheetId: wlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 16, endColumnIndex: 17 },
         rule: {
           condition: {
             type: 'ONE_OF_LIST',
             values: [
               { userEnteredValue: 'Active' },
               { userEnteredValue: 'Claimed' },
+              { userEnteredValue: 'Removed (Self)' },
               { userEnteredValue: 'Expired' },
-              { userEnteredValue: 'Removed' },
             ],
           },
-          showCustomUi: true,
-          strict: false,
+          showCustomUi: true, strict: false,
         },
       },
     });
 
-    // Conditional formatting: "Active" rows → green
+    // Source dropdown (col O = index 14)
+    formatRequests.push({
+      setDataValidation: {
+        range: { sheetId: wlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 14, endColumnIndex: 15 },
+        rule: {
+          condition: {
+            type: 'ONE_OF_LIST',
+            values: [
+              { userEnteredValue: 'Website' },
+              { userEnteredValue: 'Linktree' },
+              { userEnteredValue: 'Spiro' },
+              { userEnteredValue: 'Instagram' },
+              { userEnteredValue: 'Carley' },
+            ],
+          },
+          showCustomUi: true, strict: false,
+        },
+      },
+    });
+
+    // Conditional formatting: Active -> green
     formatRequests.push({
       addConditionalFormatRule: {
         rule: {
           ranges: [{ sheetId: wlId, startRowIndex: 1, endRowIndex: 500 }],
           booleanRule: {
-            condition: {
-              type: 'CUSTOM_FORMULA',
-              values: [{ userEnteredValue: '=$M2="Active"' }],
-            },
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$Q2="Active"' }] },
             format: { backgroundColor: COLORS.activeGreen },
           },
         },
@@ -281,16 +255,13 @@ async function ensureSheetSetup() {
       },
     });
 
-    // Conditional formatting: "Claimed" rows → blue
+    // Claimed -> blue
     formatRequests.push({
       addConditionalFormatRule: {
         rule: {
           ranges: [{ sheetId: wlId, startRowIndex: 1, endRowIndex: 500 }],
           booleanRule: {
-            condition: {
-              type: 'CUSTOM_FORMULA',
-              values: [{ userEnteredValue: '=$M2="Claimed"' }],
-            },
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$Q2="Claimed"' }] },
             format: { backgroundColor: COLORS.claimedBlue },
           },
         },
@@ -298,16 +269,13 @@ async function ensureSheetSetup() {
       },
     });
 
-    // Conditional formatting: "Expired" or "Removed" rows → red
+    // Removed/Expired -> red
     formatRequests.push({
       addConditionalFormatRule: {
         rule: {
           ranges: [{ sheetId: wlId, startRowIndex: 1, endRowIndex: 500 }],
           booleanRule: {
-            condition: {
-              type: 'CUSTOM_FORMULA',
-              values: [{ userEnteredValue: '=OR($M2="Expired",$M2="Removed")' }],
-            },
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=OR($Q2="Removed (Self)",$Q2="Expired")' }] },
             format: { backgroundColor: COLORS.expiredRed },
           },
         },
@@ -315,67 +283,115 @@ async function ensureSheetSetup() {
       },
     });
 
-    // Center-align ID, Status, Notifications Sent columns
-    [0, 12, 13].forEach((col) => {
+    // Center-align ID, Status, Notifications Sent, Sq Ft, Base/Adj Duration
+    [0, 5, 7, 8, 16, 17].forEach((col) => {
       formatRequests.push({
         repeatCell: {
           range: { sheetId: wlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: col, endColumnIndex: col + 1 },
-          cell: {
-            userEnteredFormat: { horizontalAlignment: 'CENTER' },
-          },
+          cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
           fields: 'userEnteredFormat.horizontalAlignment',
         },
       });
     });
   }
 
-  // --- Claim Log formatting ---
-  const clId = sheetMap['Claim Log'];
+  // --- Cancellation Log data validation & conditional formatting ---
+  const clId = sheetMap['Cancellation Log'];
   if (clId !== undefined) {
-    // Header style
+    // Status dropdown (col G = index 6)
     formatRequests.push({
-      repeatCell: {
-        range: { sheetId: clId, startRowIndex: 0, endRowIndex: 1 },
-        cell: {
-          userEnteredFormat: {
-            textFormat: { bold: true, fontSize: 10, foregroundColor: COLORS.headerText },
-            backgroundColor: COLORS.headerBg,
-            horizontalAlignment: 'CENTER',
-            verticalAlignment: 'MIDDLE',
-            wrapStrategy: 'WRAP',
-            padding: { top: 4, bottom: 4, left: 6, right: 6 },
+      setDataValidation: {
+        range: { sheetId: clId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 6, endColumnIndex: 7 },
+        rule: {
+          condition: {
+            type: 'ONE_OF_LIST',
+            values: [
+              { userEnteredValue: 'Open' },
+              { userEnteredValue: 'Claimed' },
+              { userEnteredValue: 'Filled Externally' },
+              { userEnteredValue: 'Expired' },
+            ],
+          },
+          showCustomUi: true, strict: false,
+        },
+      },
+    });
+
+    // Open -> yellow
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: clId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$G2="Open"' }] },
+            format: { backgroundColor: COLORS.openYellow },
           },
         },
-        fields: 'userEnteredFormat(textFormat,backgroundColor,horizontalAlignment,verticalAlignment,wrapStrategy,padding)',
+        index: 0,
       },
     });
 
-    // Freeze header row
+    // Claimed -> green
     formatRequests.push({
-      updateSheetProperties: {
-        properties: {
-          sheetId: clId,
-          gridProperties: { frozenRowCount: 1 },
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: clId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$G2="Claimed"' }] },
+            format: { backgroundColor: COLORS.activeGreen },
+          },
         },
-        fields: 'gridProperties.frozenRowCount',
+        index: 1,
       },
     });
 
-    // Column widths
-    CLAIM_COL_WIDTHS.forEach((width, i) => {
+    // Filled Externally -> purple
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: clId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$G2="Filled Externally"' }] },
+            format: { backgroundColor: COLORS.filledPurple },
+          },
+        },
+        index: 2,
+      },
+    });
+
+    // Expired -> red
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: clId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$G2="Expired"' }] },
+            format: { backgroundColor: COLORS.expiredRed },
+          },
+        },
+        index: 3,
+      },
+    });
+
+    // Center-align columns
+    [0, 3, 6, 8, 9].forEach((col) => {
       formatRequests.push({
-        updateDimensionProperties: {
-          range: { sheetId: clId, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 },
-          properties: { pixelSize: width },
-          fields: 'pixelSize',
+        repeatCell: {
+          range: { sheetId: clId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: col, endColumnIndex: col + 1 },
+          cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
+          fields: 'userEnteredFormat.horizontalAlignment',
         },
       });
     });
+  }
 
-    // Data validation: Booked in Spiro dropdown (column I, rows 2-500)
+  // --- Claim Log data validation & conditional formatting ---
+  const cmId = sheetMap['Claim Log'];
+  if (cmId !== undefined) {
+    // Booked in Spiro dropdown (col K = index 10)
     formatRequests.push({
       setDataValidation: {
-        range: { sheetId: clId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 8, endColumnIndex: 9 },
+        range: { sheetId: cmId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 10, endColumnIndex: 11 },
         rule: {
           condition: {
             type: 'ONE_OF_LIST',
@@ -384,22 +400,18 @@ async function ensureSheetSetup() {
               { userEnteredValue: 'No' },
             ],
           },
-          showCustomUi: true,
-          strict: true,
+          showCustomUi: true, strict: true,
         },
       },
     });
 
-    // Conditional formatting: "Yes" in Booked in Spiro → green row
+    // Booked=Yes -> green
     formatRequests.push({
       addConditionalFormatRule: {
         rule: {
-          ranges: [{ sheetId: clId, startRowIndex: 1, endRowIndex: 500 }],
+          ranges: [{ sheetId: cmId, startRowIndex: 1, endRowIndex: 500 }],
           booleanRule: {
-            condition: {
-              type: 'CUSTOM_FORMULA',
-              values: [{ userEnteredValue: '=$I2="Yes"' }],
-            },
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$K2="Yes"' }] },
             format: { backgroundColor: COLORS.activeGreen },
           },
         },
@@ -407,16 +419,13 @@ async function ensureSheetSetup() {
       },
     });
 
-    // Conditional formatting: "No" in Booked in Spiro → light red row
+    // Booked=No -> red
     formatRequests.push({
       addConditionalFormatRule: {
         rule: {
-          ranges: [{ sheetId: clId, startRowIndex: 1, endRowIndex: 500 }],
+          ranges: [{ sheetId: cmId, startRowIndex: 1, endRowIndex: 500 }],
           booleanRule: {
-            condition: {
-              type: 'CUSTOM_FORMULA',
-              values: [{ userEnteredValue: '=$I2="No"' }],
-            },
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$K2="No"' }] },
             format: { backgroundColor: COLORS.expiredRed },
           },
         },
@@ -424,14 +433,12 @@ async function ensureSheetSetup() {
       },
     });
 
-    // Center-align ID columns and Booked in Spiro
-    [0, 1, 8].forEach((col) => {
+    // Center-align IDs and Booked
+    [0, 1, 2, 6, 8, 10].forEach((col) => {
       formatRequests.push({
         repeatCell: {
-          range: { sheetId: clId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: col, endColumnIndex: col + 1 },
-          cell: {
-            userEnteredFormat: { horizontalAlignment: 'CENTER' },
-          },
+          range: { sheetId: cmId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: col, endColumnIndex: col + 1 },
+          cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
           fields: 'userEnteredFormat.horizontalAlignment',
         },
       });
@@ -446,53 +453,61 @@ async function ensureSheetSetup() {
   }
 
   sheetReady = true;
-  console.log('Google Sheet verified and ready.');
+  console.log('Google Sheet verified and ready (3 tabs).');
 }
 
-// Generate next waitlist ID based on existing rows
-async function getNextWaitlistId(sheets, spreadsheetId) {
+// ============================================================
+// Active Waitlist CRUD
+// ============================================================
+
+function now() {
+  return new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+}
+
+async function getNextId(sheets, spreadsheetId, tab, prefix, col) {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: 'Active Waitlist!A:A',
+    range: `${tab}!${col}:${col}`,
   });
   const rows = res.data.values || [];
-  // Skip header row, find max ID
   let maxNum = 0;
   for (let i = 1; i < rows.length; i++) {
-    const match = (rows[i][0] || '').match(/^WL-(\d+)$/);
-    if (match) {
-      maxNum = Math.max(maxNum, parseInt(match[1], 10));
-    }
+    const match = (rows[i][0] || '').match(new RegExp(`^${prefix}-(\\d+)$`));
+    if (match) maxNum = Math.max(maxNum, parseInt(match[1], 10));
   }
-  return `WL-${String(maxNum + 1).padStart(3, '0')}`;
+  return `${prefix}-${String(maxNum + 1).padStart(3, '0')}`;
 }
 
 async function addWaitlistEntry(entry) {
   const sheets = await getSheets();
   const spreadsheetId = getSheetId();
-  const id = await getNextWaitlistId(sheets, spreadsheetId);
+  const id = await getNextId(sheets, spreadsheetId, 'Active Waitlist', 'WL', 'A');
 
   const row = [
-    id,                                   // A: ID
-    entry.agentName,                      // B: Agent Name
-    entry.agentPhone,                     // C: Agent Phone
-    entry.agentEmail,                     // D: Agent Email
-    entry.serviceType,                    // E: Service Type
-    entry.area,                           // F: Area
-    entry.datePreference,                 // G: Date Preference
-    entry.dateRangeStart || '',           // H: Date Range Start
-    entry.dateRangeEnd || '',             // I: Date Range End
-    entry.notes || '',                    // J: Notes
-    entry.addedBy || 'Carley',            // K: Added By
-    new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }), // L: Date Added
-    'Active',                             // M: Status
-    0,                                    // N: Notifications Sent
-    '',                                   // O: Last Notified
+    id,                                    // A: ID
+    entry.agentName,                       // B: Agent Name
+    entry.agentPhone,                      // C: Agent Phone
+    entry.agentEmail,                      // D: Agent Email
+    entry.listingAddress || '',            // E: Listing Address
+    entry.squareFootage || '',             // F: Square Footage
+    entry.serviceType,                     // G: Service Type
+    entry.baseDuration || '',              // H: Base Duration
+    entry.adjustedDuration || '',          // I: Adjusted Duration
+    entry.timing || 'Next Available',      // J: Timing
+    entry.dateRangeStart || '',            // K: Date Range Start
+    entry.dateRangeEnd || '',              // L: Date Range End
+    entry.notes || '',                     // M: Notes
+    entry.addedBy || 'Self-Signup',        // N: Added By
+    entry.source || 'Website',            // O: Source
+    now(),                                 // P: Date Added
+    'Active',                              // Q: Status
+    0,                                     // R: Notifications Sent
+    '',                                    // S: Last Notified
   ];
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: 'Active Waitlist!A:O',
+    range: 'Active Waitlist!A:S',
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [row] },
   });
@@ -506,36 +521,44 @@ async function getActiveWaitlistEntries() {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: 'Active Waitlist!A:O',
+    range: 'Active Waitlist!A:S',
   });
 
   const rows = res.data.values || [];
-  if (rows.length <= 1) return []; // Only header or empty
+  if (rows.length <= 1) return [];
 
   return rows.slice(1).map((row) => ({
     id: row[0] || '',
     agentName: row[1] || '',
     agentPhone: row[2] || '',
     agentEmail: row[3] || '',
-    serviceType: row[4] || '',
-    area: row[5] || '',
-    datePreference: row[6] || '',
-    dateRangeStart: row[7] || '',
-    dateRangeEnd: row[8] || '',
-    notes: row[9] || '',
-    addedBy: row[10] || '',
-    dateAdded: row[11] || '',
-    status: row[12] || '',
-    notificationsSent: parseInt(row[13] || '0', 10),
-    lastNotified: row[14] || '',
+    listingAddress: row[4] || '',
+    squareFootage: parseInt(row[5] || '0', 10) || 0,
+    serviceType: row[6] || '',
+    baseDuration: parseInt(row[7] || '0', 10) || 0,
+    adjustedDuration: parseInt(row[8] || '0', 10) || 0,
+    timing: row[9] || '',
+    dateRangeStart: row[10] || '',
+    dateRangeEnd: row[11] || '',
+    notes: row[12] || '',
+    addedBy: row[13] || '',
+    source: row[14] || '',
+    dateAdded: row[15] || '',
+    status: row[16] || '',
+    notificationsSent: parseInt(row[17] || '0', 10),
+    lastNotified: row[18] || '',
   }));
+}
+
+async function getEntryById(waitlistId) {
+  const entries = await getActiveWaitlistEntries();
+  return entries.find((e) => e.id === waitlistId) || null;
 }
 
 async function updateEntryStatus(waitlistId, status) {
   const sheets = await getSheets();
   const spreadsheetId = getSheetId();
 
-  // Find the row number for this waitlist ID
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: 'Active Waitlist!A:A',
@@ -545,17 +568,17 @@ async function updateEntryStatus(waitlistId, status) {
   let rowIndex = -1;
   for (let i = 0; i < rows.length; i++) {
     if (rows[i][0] === waitlistId) {
-      rowIndex = i + 1; // 1-based for Sheets API
+      rowIndex = i + 1;
       break;
     }
   }
 
   if (rowIndex === -1) throw new Error(`Waitlist entry ${waitlistId} not found`);
 
-  // Update Status column (M = column 13)
+  // Status is column Q (index 17 -> col 17)
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `Active Waitlist!M${rowIndex}`,
+    range: `Active Waitlist!Q${rowIndex}`,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [[status]] },
   });
@@ -567,7 +590,7 @@ async function updateNotificationInfo(waitlistId) {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: 'Active Waitlist!A:O',
+    range: 'Active Waitlist!A:S',
   });
 
   const rows = res.data.values || [];
@@ -581,45 +604,181 @@ async function updateNotificationInfo(waitlistId) {
 
   if (rowIndex === -1) return;
 
-  const currentCount = parseInt(rows[rowIndex - 1][13] || '0', 10);
-  const now = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+  const currentCount = parseInt(rows[rowIndex - 1][17] || '0', 10);
 
+  // R:S = Notifications Sent + Last Notified
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `Active Waitlist!N${rowIndex}:O${rowIndex}`,
+    range: `Active Waitlist!R${rowIndex}:S${rowIndex}`,
     valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [[currentCount + 1, now]] },
+    requestBody: { values: [[currentCount + 1, now()]] },
   });
 }
 
-async function addClaimLogEntry(claim) {
+async function checkDuplicateEntry(phone, listingAddress) {
+  const entries = await getActiveWaitlistEntries();
+  return entries.find(
+    (e) => e.agentPhone === phone && e.listingAddress === listingAddress && e.status === 'Active'
+  ) || null;
+}
+
+// ============================================================
+// Cancellation Log CRUD
+// ============================================================
+
+async function addCancellationLogEntry(event) {
   const sheets = await getSheets();
   const spreadsheetId = getSheetId();
-
-  // Generate claim ID
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'Claim Log!A:A',
-  });
-  const rows = res.data.values || [];
-  const claimNum = Math.max(0, rows.length - 1) + 1;
-  const claimId = `CL-${String(claimNum).padStart(3, '0')}`;
+  const eventId = await getNextId(sheets, spreadsheetId, 'Cancellation Log', 'EV', 'A');
 
   const row = [
-    claimId,                              // A: Claim ID
-    claim.waitlistId,                     // B: Waitlist ID
-    claim.agentName,                      // C: Agent Name
-    claim.cancelledDate,                  // D: Cancelled Shoot Date
-    claim.cancelledTime,                  // E: Cancelled Shoot Time
-    claim.serviceType,                    // F: Service Type
-    claim.area,                           // G: Area
-    new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }), // H: Claimed At
-    'No',                                 // I: Booked in Spiro
+    eventId,                              // A: Event ID
+    event.shootDate || '',                // B: Shoot Date
+    event.shootTime || '',                // C: Shoot Time
+    event.duration || '',                 // D: Duration (min)
+    event.cancelledBy || '',              // E: Cancelled By
+    now(),                                // F: Received At
+    'Open',                               // G: Status
+    '',                                   // H: Filled By
+    event.agentsNotified || 0,            // I: Agents Notified
+    event.agentsSkipped || 0,             // J: Agents Skipped
+    '',                                   // K: Claimed By
+    '',                                   // L: Claimed At
   ];
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: 'Claim Log!A:I',
+    range: 'Cancellation Log!A:L',
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [row] },
+  });
+
+  return eventId;
+}
+
+async function updateCancellationStatus(eventId, status, filledBy) {
+  const sheets = await getSheets();
+  const spreadsheetId = getSheetId();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Cancellation Log!A:A',
+  });
+
+  const rows = res.data.values || [];
+  let rowIndex = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i][0] === eventId) {
+      rowIndex = i + 1;
+      break;
+    }
+  }
+
+  if (rowIndex === -1) return;
+
+  // Update G:H (Status + Filled By)
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `Cancellation Log!G${rowIndex}:H${rowIndex}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [[status, filledBy || '']] },
+  });
+
+  // If claimed, also update K:L (Claimed By + Claimed At)
+  if (status === 'Claimed' && filledBy) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `Cancellation Log!K${rowIndex}:L${rowIndex}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [[filledBy, now()]] },
+    });
+  }
+}
+
+async function updateCancellationCounts(eventId, notified, skipped) {
+  const sheets = await getSheets();
+  const spreadsheetId = getSheetId();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Cancellation Log!A:A',
+  });
+
+  const rows = res.data.values || [];
+  let rowIndex = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i][0] === eventId) {
+      rowIndex = i + 1;
+      break;
+    }
+  }
+
+  if (rowIndex === -1) return;
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `Cancellation Log!I${rowIndex}:J${rowIndex}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [[notified, skipped]] },
+  });
+}
+
+async function getOpenCancellations() {
+  const sheets = await getSheets();
+  const spreadsheetId = getSheetId();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'Cancellation Log!A:L',
+  });
+
+  const rows = res.data.values || [];
+  if (rows.length <= 1) return [];
+
+  return rows.slice(1)
+    .map((row) => ({
+      eventId: row[0] || '',
+      shootDate: row[1] || '',
+      shootTime: row[2] || '',
+      duration: parseInt(row[3] || '0', 10),
+      cancelledBy: row[4] || '',
+      receivedAt: row[5] || '',
+      status: row[6] || '',
+      filledBy: row[7] || '',
+      agentsNotified: parseInt(row[8] || '0', 10),
+      agentsSkipped: parseInt(row[9] || '0', 10),
+      claimedBy: row[10] || '',
+      claimedAt: row[11] || '',
+    }))
+    .filter((e) => e.status === 'Open');
+}
+
+// ============================================================
+// Claim Log CRUD
+// ============================================================
+
+async function addClaimLogEntry(claim) {
+  const sheets = await getSheets();
+  const spreadsheetId = getSheetId();
+  const claimId = await getNextId(sheets, spreadsheetId, 'Claim Log', 'CL', 'A');
+
+  const row = [
+    claimId,                              // A: Claim ID
+    claim.waitlistId,                     // B: Waitlist ID
+    claim.eventId || '',                  // C: Event ID
+    claim.agentName,                      // D: Agent Name
+    claim.agentPhone || '',               // E: Agent Phone
+    claim.service || '',                  // F: Service
+    claim.duration || '',                 // G: Duration
+    claim.listingAddress || '',           // H: Listing Address
+    claim.sqFt || '',                     // I: Sq Ft
+    now(),                                // J: Claimed At
+    'No',                                 // K: Booked in Spiro
+  ];
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: 'Claim Log!A:K',
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [row] },
   });
@@ -627,17 +786,17 @@ async function addClaimLogEntry(claim) {
   return claimId;
 }
 
-async function checkDuplicatePhone(phone) {
-  const entries = await getActiveWaitlistEntries();
-  return entries.find((e) => e.agentPhone === phone && e.status === 'Active') || null;
-}
-
 module.exports = {
   ensureSheetSetup,
   addWaitlistEntry,
   getActiveWaitlistEntries,
+  getEntryById,
   updateEntryStatus,
   updateNotificationInfo,
+  checkDuplicateEntry,
+  addCancellationLogEntry,
+  updateCancellationStatus,
+  updateCancellationCounts,
+  getOpenCancellations,
   addClaimLogEntry,
-  checkDuplicatePhone,
 };
