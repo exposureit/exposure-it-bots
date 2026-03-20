@@ -39,6 +39,49 @@ const CLAIM_LOG_HEADERS = [
   'Cancelled Shoot Time', 'Service Type', 'Area', 'Claimed At', 'Booked in Spiro',
 ];
 
+// Column widths for Active Waitlist (A-O)
+const WAITLIST_COL_WIDTHS = [
+  80,   // A: ID
+  160,  // B: Agent Name
+  130,  // C: Agent Phone
+  220,  // D: Agent Email
+  120,  // E: Service Type
+  110,  // F: Area
+  160,  // G: Date Preference
+  130,  // H: Date Range Start
+  130,  // I: Date Range End
+  220,  // J: Notes
+  110,  // K: Added By
+  180,  // L: Date Added
+  100,  // M: Status
+  140,  // N: Notifications Sent
+  180,  // O: Last Notified
+];
+
+// Column widths for Claim Log (A-I)
+const CLAIM_COL_WIDTHS = [
+  90,   // A: Claim ID
+  100,  // B: Waitlist ID
+  160,  // C: Agent Name
+  160,  // D: Cancelled Shoot Date
+  150,  // E: Cancelled Shoot Time
+  120,  // F: Service Type
+  110,  // G: Area
+  180,  // H: Claimed At
+  130,  // I: Booked in Spiro
+];
+
+// Brand colors
+const COLORS = {
+  headerBg: { red: 0.145, green: 0.145, blue: 0.145 },       // dark charcoal
+  headerText: { red: 1, green: 1, blue: 1 },                   // white
+  activeGreen: { red: 0.85, green: 0.95, blue: 0.85 },         // light green
+  claimedBlue: { red: 0.85, green: 0.91, blue: 0.98 },         // light blue
+  expiredRed: { red: 0.98, green: 0.87, blue: 0.87 },          // light red
+  altRow: { red: 0.96, green: 0.96, blue: 0.96 },              // subtle grey stripe
+  white: { red: 1, green: 1, blue: 1 },
+};
+
 // Auto-provision tabs and headers on first startup
 async function ensureSheetSetup() {
   if (sheetReady) return;
@@ -89,34 +132,312 @@ async function ensureSheetSetup() {
     console.log('Wrote Claim Log headers.');
   }
 
-  // Bold + freeze header rows
+  // Get sheet IDs for formatting
   const updated = await sheets.spreadsheets.get({ spreadsheetId });
-  const formatRequests = [];
+  const sheetMap = {};
   for (const sheet of updated.data.sheets) {
-    if (['Active Waitlist', 'Claim Log'].includes(sheet.properties.title)) {
+    sheetMap[sheet.properties.title] = sheet.properties.sheetId;
+  }
+
+  const formatRequests = [];
+
+  // --- Active Waitlist formatting ---
+  const wlId = sheetMap['Active Waitlist'];
+  if (wlId !== undefined) {
+    // Header style: dark background, white bold text, centered
+    formatRequests.push({
+      repeatCell: {
+        range: { sheetId: wlId, startRowIndex: 0, endRowIndex: 1 },
+        cell: {
+          userEnteredFormat: {
+            textFormat: { bold: true, fontSize: 10, foregroundColor: COLORS.headerText },
+            backgroundColor: COLORS.headerBg,
+            horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
+            wrapStrategy: 'WRAP',
+            padding: { top: 4, bottom: 4, left: 6, right: 6 },
+          },
+        },
+        fields: 'userEnteredFormat(textFormat,backgroundColor,horizontalAlignment,verticalAlignment,wrapStrategy,padding)',
+      },
+    });
+
+    // Freeze header row
+    formatRequests.push({
+      updateSheetProperties: {
+        properties: {
+          sheetId: wlId,
+          gridProperties: { frozenRowCount: 1 },
+        },
+        fields: 'gridProperties.frozenRowCount',
+      },
+    });
+
+    // Column widths
+    WAITLIST_COL_WIDTHS.forEach((width, i) => {
+      formatRequests.push({
+        updateDimensionProperties: {
+          range: { sheetId: wlId, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 },
+          properties: { pixelSize: width },
+          fields: 'pixelSize',
+        },
+      });
+    });
+
+    // Data validation: Service Type dropdown (column E, rows 2-500)
+    formatRequests.push({
+      setDataValidation: {
+        range: { sheetId: wlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 4, endColumnIndex: 5 },
+        rule: {
+          condition: {
+            type: 'ONE_OF_LIST',
+            values: [
+              { userEnteredValue: 'Photo' },
+              { userEnteredValue: 'Video' },
+              { userEnteredValue: 'Drone' },
+              { userEnteredValue: '3D' },
+              { userEnteredValue: 'Combo' },
+              { userEnteredValue: 'Any' },
+            ],
+          },
+          showCustomUi: true,
+          strict: false,
+        },
+      },
+    });
+
+    // Data validation: Area dropdown (column F, rows 2-500)
+    formatRequests.push({
+      setDataValidation: {
+        range: { sheetId: wlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 5, endColumnIndex: 6 },
+        rule: {
+          condition: {
+            type: 'ONE_OF_LIST',
+            values: [
+              { userEnteredValue: 'Pittsburgh' },
+              { userEnteredValue: 'Erie' },
+              { userEnteredValue: 'Either' },
+            ],
+          },
+          showCustomUi: true,
+          strict: false,
+        },
+      },
+    });
+
+    // Data validation: Date Preference dropdown (column G, rows 2-500)
+    formatRequests.push({
+      setDataValidation: {
+        range: { sheetId: wlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 6, endColumnIndex: 7 },
+        rule: {
+          condition: {
+            type: 'ONE_OF_LIST',
+            values: [
+              { userEnteredValue: 'ASAP/Next Available' },
+              { userEnteredValue: 'Specific Date Range' },
+              { userEnteredValue: 'Flexible' },
+            ],
+          },
+          showCustomUi: true,
+          strict: false,
+        },
+      },
+    });
+
+    // Data validation: Status dropdown (column M, rows 2-500)
+    formatRequests.push({
+      setDataValidation: {
+        range: { sheetId: wlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 12, endColumnIndex: 13 },
+        rule: {
+          condition: {
+            type: 'ONE_OF_LIST',
+            values: [
+              { userEnteredValue: 'Active' },
+              { userEnteredValue: 'Claimed' },
+              { userEnteredValue: 'Expired' },
+              { userEnteredValue: 'Removed' },
+            ],
+          },
+          showCustomUi: true,
+          strict: false,
+        },
+      },
+    });
+
+    // Conditional formatting: "Active" rows → green
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: wlId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: {
+              type: 'CUSTOM_FORMULA',
+              values: [{ userEnteredValue: '=$M2="Active"' }],
+            },
+            format: { backgroundColor: COLORS.activeGreen },
+          },
+        },
+        index: 0,
+      },
+    });
+
+    // Conditional formatting: "Claimed" rows → blue
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: wlId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: {
+              type: 'CUSTOM_FORMULA',
+              values: [{ userEnteredValue: '=$M2="Claimed"' }],
+            },
+            format: { backgroundColor: COLORS.claimedBlue },
+          },
+        },
+        index: 1,
+      },
+    });
+
+    // Conditional formatting: "Expired" or "Removed" rows → red
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: wlId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: {
+              type: 'CUSTOM_FORMULA',
+              values: [{ userEnteredValue: '=OR($M2="Expired",$M2="Removed")' }],
+            },
+            format: { backgroundColor: COLORS.expiredRed },
+          },
+        },
+        index: 2,
+      },
+    });
+
+    // Center-align ID, Status, Notifications Sent columns
+    [0, 12, 13].forEach((col) => {
       formatRequests.push({
         repeatCell: {
-          range: { sheetId: sheet.properties.sheetId, startRowIndex: 0, endRowIndex: 1 },
+          range: { sheetId: wlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: col, endColumnIndex: col + 1 },
           cell: {
-            userEnteredFormat: {
-              textFormat: { bold: true },
-              backgroundColor: { red: 0.9, green: 0.9, blue: 0.9 },
-            },
+            userEnteredFormat: { horizontalAlignment: 'CENTER' },
           },
-          fields: 'userEnteredFormat(textFormat,backgroundColor)',
+          fields: 'userEnteredFormat.horizontalAlignment',
         },
       });
-      formatRequests.push({
-        updateSheetProperties: {
-          properties: {
-            sheetId: sheet.properties.sheetId,
-            gridProperties: { frozenRowCount: 1 },
-          },
-          fields: 'gridProperties.frozenRowCount',
-        },
-      });
-    }
+    });
   }
+
+  // --- Claim Log formatting ---
+  const clId = sheetMap['Claim Log'];
+  if (clId !== undefined) {
+    // Header style
+    formatRequests.push({
+      repeatCell: {
+        range: { sheetId: clId, startRowIndex: 0, endRowIndex: 1 },
+        cell: {
+          userEnteredFormat: {
+            textFormat: { bold: true, fontSize: 10, foregroundColor: COLORS.headerText },
+            backgroundColor: COLORS.headerBg,
+            horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
+            wrapStrategy: 'WRAP',
+            padding: { top: 4, bottom: 4, left: 6, right: 6 },
+          },
+        },
+        fields: 'userEnteredFormat(textFormat,backgroundColor,horizontalAlignment,verticalAlignment,wrapStrategy,padding)',
+      },
+    });
+
+    // Freeze header row
+    formatRequests.push({
+      updateSheetProperties: {
+        properties: {
+          sheetId: clId,
+          gridProperties: { frozenRowCount: 1 },
+        },
+        fields: 'gridProperties.frozenRowCount',
+      },
+    });
+
+    // Column widths
+    CLAIM_COL_WIDTHS.forEach((width, i) => {
+      formatRequests.push({
+        updateDimensionProperties: {
+          range: { sheetId: clId, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 },
+          properties: { pixelSize: width },
+          fields: 'pixelSize',
+        },
+      });
+    });
+
+    // Data validation: Booked in Spiro dropdown (column I, rows 2-500)
+    formatRequests.push({
+      setDataValidation: {
+        range: { sheetId: clId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 8, endColumnIndex: 9 },
+        rule: {
+          condition: {
+            type: 'ONE_OF_LIST',
+            values: [
+              { userEnteredValue: 'Yes' },
+              { userEnteredValue: 'No' },
+            ],
+          },
+          showCustomUi: true,
+          strict: true,
+        },
+      },
+    });
+
+    // Conditional formatting: "Yes" in Booked in Spiro → green row
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: clId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: {
+              type: 'CUSTOM_FORMULA',
+              values: [{ userEnteredValue: '=$I2="Yes"' }],
+            },
+            format: { backgroundColor: COLORS.activeGreen },
+          },
+        },
+        index: 0,
+      },
+    });
+
+    // Conditional formatting: "No" in Booked in Spiro → light red row
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: clId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: {
+              type: 'CUSTOM_FORMULA',
+              values: [{ userEnteredValue: '=$I2="No"' }],
+            },
+            format: { backgroundColor: COLORS.expiredRed },
+          },
+        },
+        index: 1,
+      },
+    });
+
+    // Center-align ID columns and Booked in Spiro
+    [0, 1, 8].forEach((col) => {
+      formatRequests.push({
+        repeatCell: {
+          range: { sheetId: clId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: col, endColumnIndex: col + 1 },
+          cell: {
+            userEnteredFormat: { horizontalAlignment: 'CENTER' },
+          },
+          fields: 'userEnteredFormat.horizontalAlignment',
+        },
+      });
+    });
+  }
+
   if (formatRequests.length > 0) {
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
