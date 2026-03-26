@@ -23,50 +23,18 @@ async function postToSlack(text) {
   }
 }
 
-async function postBlocksToSlack(blocks, text) {
-  if (!SLACK_WEBHOOK_URL) {
-    console.log('[Slack]', text || JSON.stringify(blocks, null, 2));
-    return;
-  }
-
-  try {
-    const res = await fetch(SLACK_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text || '', blocks }),
-    });
-
-    if (!res.ok) {
-      console.error('[Slack] Failed:', res.status, await res.text());
-    }
-  } catch (err) {
-    console.error('[Slack] Error:', err.message);
-  }
-}
-
 // ============================================================
 // Notification formatters for Carley
 // ============================================================
 
-function formatCancellationAlert(cancellation, matches) {
-  const header = `:rotating_light: *Cancellation Alert*`;
-  const slotInfo = [
-    `*Date:* ${cancellation.shootDate}`,
-    `*Time:* ${cancellation.shootTime}`,
-    `*Duration:* ${cancellation.duration} min`,
-    cancellation.cancelledBy ? `*Cancelled by:* ${cancellation.cancelledBy}` : '',
-  ].filter(Boolean).join('\n');
-
+function formatMatchList(matches) {
   if (matches.length === 0) {
-    return [
-      header,
-      slotInfo,
-      '',
-      '_No matching clients on the waitlist for this slot._',
-    ].join('\n');
+    return '_No matching clients on the waitlist for this slot._';
   }
 
-  const matchList = matches.map((m, i) => {
+  const header = `:white_check_mark: *${matches.length} waitlist match${matches.length === 1 ? '' : 'es'} found:*`;
+
+  const list = matches.map((m, i) => {
     const lines = [
       `*${i + 1}. ${m.clientName}*`,
       `    Service: ${m.servicePackage} (${m.duration} min)`,
@@ -82,23 +50,50 @@ function formatCancellationAlert(cancellation, matches) {
     return lines.join('\n');
   });
 
-  return [
-    header,
-    slotInfo,
-    '',
-    `:white_check_mark: *${matches.length} waitlist match${matches.length === 1 ? '' : 'es'} found:*`,
-    '',
-    ...matchList,
-  ].join('\n');
+  return [header, '', ...list].join('\n');
 }
 
-function formatCancellationReceived(details) {
-  return `:calendar: *Cancellation received:* ${details.shootDate} at ${details.shootTime} (${details.duration} min) — ${details.cancelledBy || 'Unknown'}`;
+function formatCancellationAlert(details, matches) {
+  const slotInfo = [
+    `:rotating_light: *Cancellation*`,
+    `*Client:* ${details.clientName || 'Unknown'}`,
+    `*Service:* ${details.servicePackage || 'Unknown'}`,
+    `*Date:* ${details.shootDate} at ${details.shootTime}`,
+    `*Duration:* ${details.duration} min`,
+    details.location ? `*Location:* ${details.location}` : '',
+  ].filter(Boolean).join('\n');
+
+  return [slotInfo, '', formatMatchList(matches)].join('\n');
+}
+
+function formatRescheduleAlert(details, matches) {
+  const slotInfo = [
+    `:calendar: *Reschedule*`,
+    `*Client:* ${details.clientName || 'Unknown'}`,
+    `*Service:* ${details.servicePackage || 'Unknown'}`,
+    `*Original:* ${details.originalDate} at ${details.originalTime}`,
+    details.newDate ? `*New:* ${details.newDate} at ${details.newTime}` : '',
+    `*Duration:* ${details.duration} min`,
+    details.location ? `*Location:* ${details.location}` : '',
+  ].filter(Boolean).join('\n');
+
+  return [slotInfo, '', formatMatchList(matches)].join('\n');
+}
+
+function formatNewOrder(details) {
+  return [
+    `:new: *New Order*`,
+    `*Client:* ${details.clientName || 'Unknown'}`,
+    `*Service:* ${details.servicePackage || 'Unknown'}`,
+    `*Date:* ${details.shootDate} at ${details.shootTime}`,
+    `*Duration:* ${details.duration} min`,
+    details.location ? `*Location:* ${details.location}` : '',
+  ].filter(Boolean).join('\n');
 }
 
 module.exports = {
   postToSlack,
-  postBlocksToSlack,
   formatCancellationAlert,
-  formatCancellationReceived,
+  formatRescheduleAlert,
+  formatNewOrder,
 };

@@ -28,37 +28,91 @@ function getSheetId() {
   return id;
 }
 
-// --- Waitlist tab (matches Carley's current format) ---
-const WAITLIST_HEADERS = [
-  'Client Name',
-  'Preferred Timing',
-  'Wants Before Date',
-  'Service Package',
-  'Duration (min)',
-  'Location',
-  'Photographer Preference',
-  'Notes',
-  'Status',
-  'Date Added',
-];
+function now() {
+  return new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+}
 
-const WAITLIST_COL_WIDTHS = [
-  160, 250, 130, 200, 100, 250, 160, 250, 140, 130,
-];
+// ============================================================
+// Tab Definitions
+// ============================================================
 
-// --- Cancellation Log tab ---
-const CANCELLATION_HEADERS = [
-  'Date',
-  'Time',
-  'Duration (min)',
-  'Cancelled By',
-  'Received At',
-  'Matches Found',
-  'Notes',
-];
+const TABS = {
+  waitlist: {
+    name: 'Waitlist',
+    headers: [
+      'Client Name',
+      'Preferred Timing',
+      'Wants Before Date',
+      'Service Package',
+      'Duration (min)',
+      'Location',
+      'Photographer Preference',
+      'Notes',
+      'Status',
+      'Date Added',
+    ],
+    colWidths: [160, 260, 130, 200, 100, 260, 160, 260, 150, 130],
+  },
+  orders: {
+    name: 'Order Log',
+    headers: [
+      'Order ID',
+      'Client Name',
+      'Service Package',
+      'Duration (min)',
+      'Shoot Date',
+      'Shoot Time',
+      'Location',
+      'Photographer',
+      'Status',
+      'Received At',
+      'Notes',
+    ],
+    colWidths: [100, 160, 200, 100, 120, 110, 260, 140, 120, 180, 260],
+  },
+  cancellations: {
+    name: 'Cancellation Log',
+    headers: [
+      'Order ID',
+      'Client Name',
+      'Service Package',
+      'Duration (min)',
+      'Original Date',
+      'Original Time',
+      'Location',
+      'Cancelled At',
+      'Waitlist Matches',
+      'Notified Carley',
+      'Notes',
+    ],
+    colWidths: [100, 160, 200, 100, 120, 110, 260, 180, 120, 110, 260],
+  },
+  reschedules: {
+    name: 'Reschedule Log',
+    headers: [
+      'Order ID',
+      'Client Name',
+      'Service Package',
+      'Duration (min)',
+      'Original Date',
+      'Original Time',
+      'New Date',
+      'New Time',
+      'Location',
+      'Rescheduled At',
+      'Waitlist Matches',
+      'Notified Carley',
+      'Notes',
+    ],
+    colWidths: [100, 160, 200, 100, 120, 110, 120, 110, 260, 180, 120, 110, 260],
+  },
+};
 
-const CANCELLATION_COL_WIDTHS = [
-  120, 110, 100, 160, 180, 110, 250,
+const TAB_NAMES = [
+  TABS.waitlist.name,
+  TABS.orders.name,
+  TABS.cancellations.name,
+  TABS.reschedules.name,
 ];
 
 const COLORS = {
@@ -66,10 +120,15 @@ const COLORS = {
   headerText: { red: 1, green: 1, blue: 1 },
   onWaitlist: { red: 0.85, green: 0.95, blue: 0.85 },
   rescheduled: { red: 0.85, green: 0.91, blue: 0.98 },
-  nothingAvailable: { red: 0.98, green: 0.87, blue: 0.87 },
+  nothingAvailable: { red: 0.93, green: 0.93, blue: 0.93 },
+  completed: { red: 0.85, green: 0.91, blue: 0.98 },
+  cancelled: { red: 0.98, green: 0.87, blue: 0.87 },
+  yesGreen: { red: 0.85, green: 0.95, blue: 0.85 },
 };
 
-const TAB_NAMES = ['Waitlist', 'Cancellation Log'];
+// ============================================================
+// Sheet Setup (auto-provision on startup)
+// ============================================================
 
 async function ensureSheetSetup() {
   if (sheetReady) return;
@@ -96,24 +155,19 @@ async function ensureSheetSetup() {
   }
 
   // Write headers if empty
-  const headerConfigs = [
-    { tab: 'Waitlist', headers: WAITLIST_HEADERS, range: `A1:${String.fromCharCode(64 + WAITLIST_HEADERS.length)}1` },
-    { tab: 'Cancellation Log', headers: CANCELLATION_HEADERS, range: `A1:${String.fromCharCode(64 + CANCELLATION_HEADERS.length)}1` },
-  ];
+  for (const tabDef of Object.values(TABS)) {
+    const lastCol = String.fromCharCode(64 + tabDef.headers.length);
+    const range = `${tabDef.name}!A1:${lastCol}1`;
 
-  for (const cfg of headerConfigs) {
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${cfg.tab}!${cfg.range}`,
-    });
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
     if (!res.data.values || res.data.values.length === 0) {
       await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${cfg.tab}!${cfg.range}`,
+        range,
         valueInputOption: 'RAW',
-        requestBody: { values: [cfg.headers] },
+        requestBody: { values: [tabDef.headers] },
       });
-      console.log(`Wrote ${cfg.tab} headers.`);
+      console.log(`Wrote ${tabDef.name} headers.`);
     }
   }
 
@@ -126,14 +180,9 @@ async function ensureSheetSetup() {
 
   const formatRequests = [];
 
-  // Apply header formatting + freeze + column widths to both tabs
-  const tabConfigs = [
-    { name: 'Waitlist', widths: WAITLIST_COL_WIDTHS },
-    { name: 'Cancellation Log', widths: CANCELLATION_COL_WIDTHS },
-  ];
-
-  for (const cfg of tabConfigs) {
-    const sid = sheetMap[cfg.name];
+  // Apply header formatting + freeze + column widths to all tabs
+  for (const tabDef of Object.values(TABS)) {
+    const sid = sheetMap[tabDef.name];
     if (sid === undefined) continue;
 
     // Header style
@@ -154,7 +203,7 @@ async function ensureSheetSetup() {
       },
     });
 
-    // Freeze header
+    // Freeze header row
     formatRequests.push({
       updateSheetProperties: {
         properties: { sheetId: sid, gridProperties: { frozenRowCount: 1 } },
@@ -163,7 +212,7 @@ async function ensureSheetSetup() {
     });
 
     // Column widths
-    cfg.widths.forEach((width, i) => {
+    tabDef.colWidths.forEach((width, i) => {
       formatRequests.push({
         updateDimensionProperties: {
           range: { sheetId: sid, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 },
@@ -174,8 +223,8 @@ async function ensureSheetSetup() {
     });
   }
 
-  // Waitlist tab: Status dropdown + conditional formatting
-  const wlId = sheetMap['Waitlist'];
+  // ---- Waitlist tab: Status dropdown + conditional formatting ----
+  const wlId = sheetMap[TABS.waitlist.name];
   if (wlId !== undefined) {
     // Status dropdown (col I = index 8)
     formatRequests.push({
@@ -224,7 +273,7 @@ async function ensureSheetSetup() {
       },
     });
 
-    // Nothing Available -> red
+    // Nothing Available -> gray
     formatRequests.push({
       addConditionalFormatRule: {
         rule: {
@@ -239,6 +288,158 @@ async function ensureSheetSetup() {
     });
   }
 
+  // ---- Order Log: Status dropdown + conditional formatting ----
+  const olId = sheetMap[TABS.orders.name];
+  if (olId !== undefined) {
+    // Status dropdown (col I = index 8)
+    formatRequests.push({
+      setDataValidation: {
+        range: { sheetId: olId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 8, endColumnIndex: 9 },
+        rule: {
+          condition: {
+            type: 'ONE_OF_LIST',
+            values: [
+              { userEnteredValue: 'Scheduled' },
+              { userEnteredValue: 'Completed' },
+              { userEnteredValue: 'Cancelled' },
+              { userEnteredValue: 'Rescheduled' },
+            ],
+          },
+          showCustomUi: true,
+          strict: false,
+        },
+      },
+    });
+
+    // Scheduled -> green
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: olId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$I2="Scheduled"' }] },
+            format: { backgroundColor: COLORS.onWaitlist },
+          },
+        },
+        index: 0,
+      },
+    });
+
+    // Completed -> blue
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: olId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$I2="Completed"' }] },
+            format: { backgroundColor: COLORS.completed },
+          },
+        },
+        index: 1,
+      },
+    });
+
+    // Cancelled -> red
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: olId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$I2="Cancelled"' }] },
+            format: { backgroundColor: COLORS.cancelled },
+          },
+        },
+        index: 2,
+      },
+    });
+
+    // Rescheduled -> blue
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: olId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$I2="Rescheduled"' }] },
+            format: { backgroundColor: COLORS.rescheduled },
+          },
+        },
+        index: 3,
+      },
+    });
+  }
+
+  // ---- Cancellation Log: "Notified Carley" conditional formatting ----
+  const clId = sheetMap[TABS.cancellations.name];
+  if (clId !== undefined) {
+    // Notified Carley dropdown (col J = index 9)
+    formatRequests.push({
+      setDataValidation: {
+        range: { sheetId: clId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 9, endColumnIndex: 10 },
+        rule: {
+          condition: {
+            type: 'ONE_OF_LIST',
+            values: [
+              { userEnteredValue: 'Yes' },
+              { userEnteredValue: 'No' },
+            ],
+          },
+          showCustomUi: true,
+          strict: false,
+        },
+      },
+    });
+
+    // Yes -> green row
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: clId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$J2="Yes"' }] },
+            format: { backgroundColor: COLORS.yesGreen },
+          },
+        },
+        index: 0,
+      },
+    });
+  }
+
+  // ---- Reschedule Log: "Notified Carley" conditional formatting ----
+  const rlId = sheetMap[TABS.reschedules.name];
+  if (rlId !== undefined) {
+    // Notified Carley dropdown (col L = index 11)
+    formatRequests.push({
+      setDataValidation: {
+        range: { sheetId: rlId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 11, endColumnIndex: 12 },
+        rule: {
+          condition: {
+            type: 'ONE_OF_LIST',
+            values: [
+              { userEnteredValue: 'Yes' },
+              { userEnteredValue: 'No' },
+            ],
+          },
+          showCustomUi: true,
+          strict: false,
+        },
+      },
+    });
+
+    // Yes -> green row
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: rlId, startRowIndex: 1, endRowIndex: 500 }],
+          booleanRule: {
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=$L2="Yes"' }] },
+            format: { backgroundColor: COLORS.yesGreen },
+          },
+        },
+        index: 0,
+      },
+    });
+  }
+
   if (formatRequests.length > 0) {
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
@@ -247,16 +448,12 @@ async function ensureSheetSetup() {
   }
 
   sheetReady = true;
-  console.log('Google Sheet verified and ready (2 tabs).');
+  console.log(`Google Sheet verified and ready (${TAB_NAMES.length} tabs).`);
 }
 
 // ============================================================
-// Read waitlist entries (Carley manages these manually)
+// Waitlist (read-only — Carley manages entries manually)
 // ============================================================
-
-function now() {
-  return new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
-}
 
 async function getWaitlistEntries() {
   const sheets = await getSheets();
@@ -264,14 +461,14 @@ async function getWaitlistEntries() {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: 'Waitlist!A:J',
+    range: `${TABS.waitlist.name}!A:J`,
   });
 
   const rows = res.data.values || [];
   if (rows.length <= 1) return [];
 
   return rows.slice(1).map((row, i) => ({
-    rowNumber: i + 2, // 1-indexed, skip header
+    rowNumber: i + 2,
     clientName: row[0] || '',
     preferredTiming: row[1] || '',
     wantsBeforeDate: row[2] || '',
@@ -291,7 +488,37 @@ async function getActiveWaitlistEntries() {
 }
 
 // ============================================================
-// Cancellation Log (for tracking)
+// Order Log
+// ============================================================
+
+async function addOrderLogEntry(order) {
+  const sheets = await getSheets();
+  const spreadsheetId = getSheetId();
+
+  const row = [
+    order.orderId || '',
+    order.clientName || '',
+    order.servicePackage || '',
+    order.duration || '',
+    order.shootDate || '',
+    order.shootTime || '',
+    order.location || '',
+    order.photographer || '',
+    'Scheduled',
+    now(),
+    order.notes || '',
+  ];
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${TABS.orders.name}!A:K`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [row] },
+  });
+}
+
+// ============================================================
+// Cancellation Log
 // ============================================================
 
 async function addCancellationLogEntry(event) {
@@ -299,18 +526,54 @@ async function addCancellationLogEntry(event) {
   const spreadsheetId = getSheetId();
 
   const row = [
+    event.orderId || '',
+    event.clientName || '',
+    event.servicePackage || '',
+    event.duration || '',
     event.shootDate || '',
     event.shootTime || '',
-    event.duration || '',
-    event.cancelledBy || '',
+    event.location || '',
     now(),
     event.matchesFound || 0,
+    event.matchesFound > 0 ? 'Yes' : 'No',
     event.notes || '',
   ];
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: 'Cancellation Log!A:G',
+    range: `${TABS.cancellations.name}!A:K`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [row] },
+  });
+}
+
+// ============================================================
+// Reschedule Log
+// ============================================================
+
+async function addRescheduleLogEntry(event) {
+  const sheets = await getSheets();
+  const spreadsheetId = getSheetId();
+
+  const row = [
+    event.orderId || '',
+    event.clientName || '',
+    event.servicePackage || '',
+    event.duration || '',
+    event.originalDate || '',
+    event.originalTime || '',
+    event.newDate || '',
+    event.newTime || '',
+    event.location || '',
+    now(),
+    event.matchesFound || 0,
+    event.matchesFound > 0 ? 'Yes' : 'No',
+    event.notes || '',
+  ];
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${TABS.reschedules.name}!A:M`,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [row] },
   });
@@ -320,5 +583,7 @@ module.exports = {
   ensureSheetSetup,
   getWaitlistEntries,
   getActiveWaitlistEntries,
+  addOrderLogEntry,
   addCancellationLogEntry,
+  addRescheduleLogEntry,
 };
